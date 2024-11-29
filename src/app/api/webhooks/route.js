@@ -4,26 +4,33 @@ import { createOrUpdateUser, deleteUser } from '@/lib/actions/user';
 import { clerkClient } from '@clerk/nextjs/server';
 
 export async function POST(req) {
+  // Retrieve Webhook secret from environment
   const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 
   if (!WEBHOOK_SECRET) {
-    throw new Error('Please add WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local');
+    throw new Error(
+      'Please add WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local'
+    );
   }
 
-  // Get the headers
+  // Extract headers for Svix
   const headerPayload = headers();
   const svix_id = headerPayload.get('svix-id');
   const svix_timestamp = headerPayload.get('svix-timestamp');
   const svix_signature = headerPayload.get('svix-signature');
 
   if (!svix_id || !svix_timestamp || !svix_signature) {
-    return new Response('Error occurred -- no svix headers', { status: 400 });
+    return new Response('Error occurred -- missing svix headers', {
+      status: 400,
+    });
   }
 
+  // Parse request body
   const payload = await req.json();
   const body = JSON.stringify(payload);
-  const wh = new Webhook(WEBHOOK_SECRET);
 
+  // Verify Svix webhook
+  const wh = new Webhook(WEBHOOK_SECRET);
   let evt;
 
   try {
@@ -34,16 +41,18 @@ export async function POST(req) {
     });
   } catch (err) {
     console.error('Error verifying webhook:', err);
-    return new Response('Error occurred', { status: 400 });
+    return new Response('Error verifying webhook', { status: 400 });
   }
 
-  const { id } = evt?.data;
   const eventType = evt?.type;
-  console.log(`Webhook with ID: ${id}, Type: ${eventType}`);
+  const { id } = evt?.data;
+
+  console.log(`Webhook with ID: ${id} and type: ${eventType}`);
   console.log('Webhook body:', body);
 
   if (eventType === 'user.created' || eventType === 'user.updated') {
-    const { id, first_name, last_name, image_url, email_addresses, username } = evt?.data;
+    const { id, first_name, last_name, image_url, email_addresses, username } =
+      evt?.data;
 
     try {
       const user = await createOrUpdateUser(
@@ -55,14 +64,21 @@ export async function POST(req) {
         username
       );
 
+      // Initialize Clerk client locally
+      const client = await clerkClient();
+      
       if (user && eventType === 'user.created') {
         try {
-          await clerkClient.users.updateUser(id, {
+
+          // Update user metadata
+          const res = await client.users.updateUser(id, {
             publicMetadata: {
               userMongoId: user._id,
               isAdmin: user.isAdmin,
             },
           });
+
+          console.log('Metadata updated successfully:', res.publicMetadata);
         } catch (error) {
           console.error('Error updating user metadata:', error);
         }
@@ -74,6 +90,7 @@ export async function POST(req) {
   }
 
   if (eventType === 'user.deleted') {
+    const { id } = evt?.data;
     try {
       await deleteUser(id);
     } catch (error) {
