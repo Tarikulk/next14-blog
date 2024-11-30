@@ -65,7 +65,7 @@ export async function POST(req) {
       );
 
       // Initialize Clerk client locally
-      const client = await clerkClient();
+      const client = clerkClient;
 
       if (user && eventType === "user.created") {
         try {
